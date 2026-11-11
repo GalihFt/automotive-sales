@@ -1,0 +1,16 @@
+﻿vehicle_id,brand,model,category,list_price
+V001,Toyota,Avanza,MPV,265000000
+V002,Toyota,Innova Zenix,MPV,450000000
+V003,Toyota,Raize,SUV,295000000
+V004,Daihatsu,Xenia,MPV,250000000
+V005,Daihatsu,Terios,SUV,290000000
+V006,Honda,Brio,Hatchback,190000000
+V007,Honda,HR-V,SUV,390000000
+V008,Honda,BR-V,SUV,330000000
+V009,Mitsubishi,Xpander,MPV,315000000
+V010,Mitsubishi,Pajero Sport,SUV,635000000
+V011,Suzuki,XL7,SUV,285000000
+V012,Suzuki,Baleno,Hatchback,275000000
+V013,Hyundai,Creta,SUV,345000000
+V014,Hyundai,Stargazer,MPV,295000000
+V015,Isuzu,Traga,Pickup,270000000
