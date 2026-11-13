@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagram pipeline penjualan</title>
+<style>
+:root { color-scheme: light dark; --bg:#f4f6fa; --paper:#fff; --fg:#17233a; --muted:#53627a; --line:#cbd3df; --python:#e9f0ff; --db:#e6f5ef; --bad:#fff0eb; --code:#eef1f6; }
+@media(prefers-color-scheme:dark) { :root { --bg:#111823; --paper:#192332; --fg:#e7edf6; --muted:#b0bfd2; --line:#46566c; --python:#223655; --db:#193e35; --bad:#492c29; --code:#253247; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.65 system-ui,sans-serif; }
+main { max-width:1060px; margin:auto; padding:36px 22px 70px; }
+h1 { font-size:2rem; line-height:1.2; } h2 { font-size:1.4rem; margin-top:0; } h3 { font-size:1.06rem; }
+p { margin:12px 0; } a { color:inherit; text-underline-offset:4px; }
+nav { display:flex; gap:10px 22px; flex-wrap:wrap; margin:24px 0; }
+section { background:var(--paper); padding:26px; margin:22px 0; border-radius:14px; scroll-margin-top:20px; }
+.muted,small { color:var(--muted); } code { background:var(--code); padding:2px 5px; border-radius:4px; overflow-wrap:anywhere; }
+.flow { display:flex; flex-direction:column; align-items:stretch; max-width:740px; margin:24px auto; }
+.node { padding:14px 18px; border:1px solid var(--line); border-radius:9px; text-align:center; overflow-wrap:anywhere; }
+.node strong { display:block; } .py { background:var(--python); } .db { background:var(--db); } .bad { background:var(--bad); }
+.arrow { text-align:center; color:var(--muted); padding:5px; } .arrow::after { content:'↓'; display:block; font-size:23px; line-height:1.1; }
+.branch { display:grid; grid-template-columns:1fr 1fr; gap:18px; align-items:start; }
+.branch.three { grid-template-columns:repeat(3,1fr); }
+.lane { display:grid; gap:8px; } .label { color:var(--muted); text-align:center; font-size:.9rem; }
+.decision { border:2px dashed var(--line); }
+.table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; margin:18px 0; text-align:left; }
+th,td { padding:11px; border-bottom:1px solid var(--line); vertical-align:top; } th { font-size:.9rem; }
+li { margin:7px 0; } .note { border-left:3px solid var(--line); padding:4px 16px; margin:20px 0; }
+.step { display:grid; grid-template-columns:45px 1fr; gap:12px; margin:15px 0; align-items:start; }
+.num { border-radius:50%; background:var(--code); text-align:center; width:36px; height:36px; line-height:36px; }
+.step p { margin:0; } .step small { display:block; }
+@media(max-width:620px) { main{padding:22px 12px;} section{padding:20px 14px;} .branch,.branch.three{grid-template-columns:1fr;} h1{font-size:1.65rem;} }
+@media print { body{background:white;color:black;} main{max-width:none;padding:0;} section{break-inside:avoid;border:1px solid #bbb;} nav{display:none;} }
+</style>
+</head>
+<body>
+<main>
+<h1>Perjalanan data penjualan</h1>
+<p class="muted">Panduan diagram untuk kode saat ini: CSV → Python → staging PostgreSQL → sales → laporan. Bisa dibuka langsung tanpa internet.</p>
+<nav aria-label="Daftar isi">
+<a href="#peta">Tempat data</a><a href="#urutan">Urutan eksekusi</a><a href="#validasi">Validasi</a><a href="#merge">Upsert</a><a href="#staging">Umur staging</a><a href="#mode">Mode</a><a href="#contoh">Contoh</a><a href="#error">Kegagalan</a>
+</nav>
+
+<section id="peta">
+<h2>1. Data berada di mana?</h2>
+<div class="flow" aria-label="Alur data dari CSV ke tabel utama">
+<div class="node"><strong>FILE DI KOMPUTER</strong><code>data/incoming/sales_2026_11.csv</code><br>Data penjualan masukan</div>
+<div class="arrow">Python membaca file</div>
+<div class="node py"><strong>MEMORI PYTHON · read_batch()</strong>Validasi nilai, konversi tipe, dan periksa ID berulang dalam file</div>
+<div class="arrow">Pisahkan hasil</div>
+<div class="branch">
+<div class="lane"><div class="node py"><strong>accepted</strong>List Python berisi baris valid</div><div class="arrow">INSERT melalui conn.execute()</div><div class="node db"><strong>POSTGRESQL · sales_staging</strong>Tabel sementara pada koneksi pipeline</div><div class="arrow">Jalankan merge_sales.sql</div><div class="node db"><strong>POSTGRESQL · automotive.sales</strong>Tabel utama: insert / update / lewati</div></div>
+<div class="lane"><div class="node bad"><strong>rejected</strong>List Python berisi baris salah, nomor baris, dan alasan</div><div class="arrow">Menunggu proses database selesai</div><div class="node"><strong>FILE LAPORAN</strong>CSV penolakan + JSON ringkasan di <code>reports/</code></div></div>
+</div>
+</div>
+<p class="note"><code>accepted</code> adalah list di RAM. <code>sales_staging</code> adalah tabel di database. Data disalin dari list ke staging; barulah SQL menggabungkannya ke tabel utama.</p>
+<p>Referensi dealer dan kendaraan diambil dari PostgreSQL pada mode load/dry-run. Mode validate-only mengambil referensi dari CSV master lokal dan tidak membuat staging.</p>
+</section>
+
+<section id="urutan">
+<h2>2. Urutan eksekusi mode database</h2>
+<div class="step"><span class="num">1</span><p><strong>main() membaca perintah terminal</strong><small>Ambil path CSV, mode, dan folder laporan. Dua flag mode tidak boleh dipakai bersamaan.</small></p></div>
+<div class="step"><span class="num">2</span><p><strong>run() memeriksa DATABASE_URL</strong><small>Buat engine SQLAlchemy, buka satu koneksi, mulai transaksi melalui conn.begin().</small></p></div>
+<div class="step"><span class="num">3</span><p><strong>Ambil referensi dari tabel master</strong><small>SELECT dealer_id dan vehicle_id. Hasilnya disimpan sebagai set Python untuk pencarian ID.</small></p></div>
+<div class="step"><span class="num">4</span><p><strong>read_batch() membaca CSV</strong><small>Periksa header, validasi setiap baris, cek ID berulang, lalu kembalikan accepted dan rejected.</small></p></div>
+<div class="step"><span class="num">5</span><p><strong>Buat sales_staging yang kosong</strong><small>CREATE TEMP TABLE ... AS SELECT * FROM automotive.sales WITH NO DATA.</small></p></div>
+<div class="step"><span class="num">6</span><p><strong>Isi staging dan jalankan penggabungan</strong><small>Jika accepted tidak kosong: INSERT baris valid, baca teks merge_sales.sql, lalu conn.execute(text(sql)). rowcount menjadi applied. Jika accepted kosong, langkah ini dilewati.</small></p></div>
+<div class="step"><span class="num">7</span><p><strong>Akhiri transaksi</strong><small>Load: commit otomatis jika blok berhasil. Dry-run: rollback eksplisit. Error dalam transaksi: rollback. Staging tidak dipertahankan.</small></p></div>
+<div class="step"><span class="num">8</span><p><strong>Lepaskan koneksi dan tulis laporan</strong><small>Dispose engine, buat CSV penolakan dan JSON ringkasan, lalu cetak ringkasan ke terminal. Proses yang gagal sebelum tahap ini tidak menghasilkan laporan batch.</small></p></div>
+</section>
+
+<section id="validasi">
+<h2>3. Pemeriksaan setiap baris di Python</h2>
+<div class="flow">
+<div class="node py"><strong>Mulai read_batch()</strong>accepted = [] · rejected = [] · seen = set()</div>
+<div class="arrow"></div>
+<div class="node decision"><strong>Header tepat sesuai COLUMNS?</strong>Tidak → hentikan seluruh proses file.<br>Ya → baca baris satu per satu.</div>
+<div class="arrow"></div>
+<div class="node py"><strong>Periksa struktur dan nilai</strong>Kolom berlebih → tolak.<br>Hapus spasi awal/akhir, cek kolom wajib dan panjang ID.<br>Cek dealer, kendaraan, dan status.<br>Konversi tanggal, timestamp, jumlah, dan harga.<br>Cek batas nilai dan hubungan tanggal.</div>
+<div class="arrow">Jika semua pemeriksaan lolos</div>
+<div class="node decision"><strong>order_id sudah ada di seen?</strong>Ya → tolak sebagai duplikat dalam file.<br>Tidak → tambahkan ID ke seen dan record ke accepted.</div>
+<div class="arrow"></div>
+<div class="branch">
+<div class="node py"><strong>Lolos → accepted</strong>Baris valid pertama untuk ID tersebut dipakai</div>
+<div class="node bad"><strong>Gagal → rejected</strong>Catat nilai masukan, nomor baris, dan alasan pertama kegagalan</div>
+</div>
+<div class="arrow">Lanjut ke baris berikutnya sampai CSV selesai</div>
+<div class="node py"><strong>return accepted, rejected</strong></div>
+</div>
+<div class="table-wrap"><table><thead><tr><th>Aturan</th><th>Syarat</th></tr></thead><tbody>
+<tr><td>Kolom wajib</td><td>Semua terisi, termasuk updated_at.</td></tr>
+<tr><td>Panjang ID</td><td>order_id ≤ 50; dealer_id dan vehicle_id ≤ 10 karakter.</td></tr>
+<tr><td>Referensi</td><td>Dealer dan kendaraan terdaftar pada master.</td></tr>
+<tr><td>Status</td><td>pending, delivered, atau cancelled.</td></tr>
+<tr><td>Tipe</td><td>date, datetime, int, Decimal sesuai kolom.</td></tr>
+<tr><td>Waktu</td><td>updated_at tanpa zona waktu; tanggalnya tidak sebelum order_date.</td></tr>
+<tr><td>Jumlah</td><td>1–32.767.</td></tr>
+<tr><td>Harga</td><td>Angka terbatas, positif, kurang dari 10<sup>18</sup>, maksimal dua angka desimal.</td></tr>
+</tbody></table></div>
+<p class="note"><code>seen</code> hanya mencatat baris valid dari file yang sedang dibaca. Ini bukan kumpulan ID dari tabel sales. Jika kemunculan pertama tidak valid, kemunculan valid berikutnya masih bisa diterima.</p>
+</section>
+
+<section id="merge">
+<h2>4. Keputusan PostgreSQL saat upsert</h2>
+<p>Python memanggil satu perintah SQL untuk seluruh staging. Diagram ini menggambarkan keputusan logis untuk setiap baris.</p>
+<div class="flow">
+<div class="node db"><strong>SELECT ... FROM sales_staging</strong>Sumber data untuk INSERT INTO automotive.sales AS target</div>
+<div class="arrow"></div>
+<div class="node decision"><strong>order_id sudah ada di sales?</strong></div>
+<div class="arrow">Dua kemungkinan</div>
+<div class="branch">
+<div class="lane"><div class="label">BELUM ADA</div><div class="node db"><strong>INSERT</strong>Buat pesanan baru<br>Masuk hitungan applied</div></div>
+<div class="lane"><div class="label">SUDAH ADA</div><div class="node db"><strong>ON CONFLICT (order_id)</strong>Periksa timestamp</div><div class="arrow"></div><div class="node decision"><strong>Timestamp lama NULL atau timestamp masukan lebih baru?</strong></div><div class="arrow"></div><div class="node db"><strong>Ya → UPDATE</strong>Ganti kolom pesanan dari masukan<br>Masuk hitungan applied</div><div class="node"><strong>Tidak → LEWATI</strong>Timestamp sama atau lebih lama<br>Masuk skipped_same_or_older</div></div>
+</div>
+</div>
+<div class="table-wrap"><table><thead><tr><th>Istilah SQL</th><th>Artinya</th></tr></thead><tbody>
+<tr><td><code>target</code></td><td>Baris lama pada automotive.sales.</td></tr>
+<tr><td><code>EXCLUDED</code></td><td>Baris masukan yang hendak diinsert tetapi berbenturan dengan ID lama.</td></tr>
+<tr><td><code>WHERE</code> pada DO UPDATE</td><td>Membatasi kapan update boleh dilakukan.</td></tr>
+</tbody></table></div>
+<p>Timestamp sama dilewati walaupun status atau nilai lain berbeda. Saat update, semua kolom pada bagian SET diganti; masukan harus berisi baris lengkap. Pipeline belum mengatur transisi status atau pengurangan stok.</p>
+</section>
+
+<section id="staging">
+<h2>5. Di mana staging hidup?</h2>
+<div class="flow">
+<div class="node db"><strong>Koneksi A · pipeline Python</strong>BEGIN → buat staging → isi staging → merge sales</div>
+<div class="arrow">Seluruh operasi memakai objek conn yang sama</div>
+<div class="branch">
+<div class="node db"><strong>COMMIT</strong>Perubahan sales tersimpan.<br>Staging dihapus oleh ON COMMIT DROP.</div>
+<div class="node"><strong>ROLLBACK</strong>Perubahan sales dibatalkan.<br>Pembuatan staging juga dibatalkan.</div>
+</div>
+</div>
+<p class="note"><strong>Koneksi B, misalnya SQL editor, tidak bisa melihat tabel sementara milik koneksi A.</strong> Menjalankan merge_sales.sql sendirian biasanya gagal karena staging belum dibuat pada sesi editor tersebut.</p>
+<p>Tabel sementara berada di schema sesi PostgreSQL, misalnya <code>pg_temp_3</code>. Namanya bisa berbeda. Staging dibuat dengan nama dan tipe kolom hasil SELECT, tanpa data; bukan salinan lengkap constraint atau indeks tabel utama.</p>
+<p>Untuk pipeline ini, staging menjadi tempat singgah agar SQL dapat membaca masukan sebagai tabel. Validasi tetap dilakukan di Python. Itulah sebabnya data tampak ditampung dua kali.</p>
+</section>
+
+<section id="mode">
+<h2>6. Perbedaan tiga mode</h2>
+<div class="table-wrap"><table><thead><tr><th>Tahap</th><th>--validate-only</th><th>--dry-run</th><th>Load</th></tr></thead><tbody>
+<tr><td>Master referensi</td><td>CSV lokal</td><td>PostgreSQL</td><td>PostgreSQL</td></tr>
+<tr><td>Validasi Python</td><td>Ya</td><td>Ya</td><td>Ya</td></tr>
+<tr><td>Staging</td><td>Tidak dibuat</td><td>Dibuat</td><td>Dibuat</td></tr>
+<tr><td>Merge jika ada baris valid</td><td>Tidak</td><td>Ya</td><td>Ya</td></tr>
+<tr><td>Akhir transaksi DB</td><td>Tidak ada</td><td>Rollback</td><td>Commit</td></tr>
+<tr><td>Laporan</td><td>Ya*</td><td>Ya*</td><td>Ya*</td></tr>
+</tbody></table></div>
+<p><small>* Jika proses berhasil mencapai tahap laporan. Pada validate-only, applied dan skipped_same_or_older bernilai null. Pada dry-run, applied adalah jumlah perubahan yang dicoba lalu dibatalkan.</small></p>
+</section>
+
+<section id="contoh">
+<h2>7. Contoh 13 baris pada repo</h2>
+<p>Dengan database berisi data awal yang belum berubah:</p>
+<div class="flow">
+<div class="node"><strong>13 baris CSV</strong>10 pesanan baru + 1 pembaruan + 2 data salah</div>
+<div class="arrow">Validasi Python</div>
+<div class="branch"><div class="node py"><strong>11 accepted</strong>Lanjut ke staging</div><div class="node bad"><strong>2 rejected</strong>Qty negatif dan dealer D999</div></div>
+<div class="arrow">Merge 11 baris valid ke sales</div>
+<div class="branch"><div class="node db"><strong>10 INSERT</strong>ORD-DEMO-202611-0001 sampai 0010</div><div class="node db"><strong>1 UPDATE</strong>ORD-2025-003351<br>pending → delivered</div></div>
+<div class="arrow">Load: commit</div>
+<div class="node db"><strong>11 applied tersimpan</strong>Jika dry-run: 11 applied dicoba, tetapi 0 perubahan tersimpan.</div>
+<div class="arrow">Impor ulang file setelah load berhasil</div>
+<div class="node"><strong>0 applied · 11 skipped_same_or_older · 2 rejected</strong>Timestamp sama sehingga tidak ada perubahan tambahan.</div>
+</div>
+<p>Duplikat dalam satu CSV ditolak Python. ID yang sudah ada dalam database diperiksa PostgreSQL dan bisa diperbarui. Dua kasus itu berbeda.</p>
+</section>
+
+<section id="error">
+<h2>8. Apa yang terjadi jika gagal?</h2>
+<div class="table-wrap"><table><thead><tr><th>Kondisi</th><th>Akibat</th></tr></thead><tbody>
+<tr><td>Satu baris salah</td><td>Masuk rejected; proses baris lain dilanjutkan.</td></tr>
+<tr><td>Semua baris ditolak</td><td>Mode DB membuat staging kosong, melewati merge, lalu menulis laporan.</td></tr>
+<tr><td>Header salah / file tidak ditemukan</td><td>Program berhenti sebelum laporan batch ditulis.</td></tr>
+<tr><td>Kesalahan saat transaksi DB</td><td>Semua perubahan DB pada batch dibatalkan; laporan batch belum ditulis.</td></tr>
+<tr><td>Laporan gagal ditulis setelah commit</td><td>Data DB sudah tersimpan; laporan mungkin tidak lengkap.</td></tr>
+</tbody></table></div>
+<p>Nama laporan memakai waktu lokal dan potongan UUID. CSV penolakan berisi nilai masukan, nomor baris, dan alasan. JSON memuat mode, path input, accepted, rejected, applied, skipped_same_or_older, dan path file penolakan.</p>
+<p><code>updated_at</code> berasal dari data CSV dan menentukan urutan pembaruan. Waktu pada nama laporan menunjukkan kapan pipeline dijalankan.</p>
+</section>
+
+<section>
+<h2>9. Hubungan dengan file lain</h2>
+<ul>
+<li><code>load_data.py</code>: loader awal, terpisah dari pipeline tambahan.</li>
+<li><code>sql/create_table.sql</code>: setup schema dan tabel utama; tidak dipanggil otomatis pipeline.</li>
+<li><code>requirements.txt</code>: dependensi Python.</li>
+<li><code>tests/test_pipeline_sales.py</code>: tes parsing dan validasi, belum menguji eksekusi PostgreSQL.</li>
+<li><a href="pipeline-sales.md">pipeline-sales.md</a>: diagram Mermaid dan penjelasan yang bisa dibaca sebagai teks.</li>
+<li><a href="../README.md">README.md</a>: langkah setup dan perintah menjalankan pipeline.</li>
+</ul>
+</section>
+</main>
+</body>
+</html>
