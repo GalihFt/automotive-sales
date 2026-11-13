@@ -2,7 +2,7 @@
 
 Repo latihan untuk memindahkan data CSV ke PostgreSQL menggunakan Python. Ada dua proses: **mengisi data awal** melalui `load_data.py` dan **mengimpor penjualan tambahan** melalui `pipeline_sales.py`.
 
-Satu **batch** berarti satu file CSV yang diproses pada satu kali eksekusi. Versi ini memakai alur validasi Python → staging → upsert → laporan.
+Satu **batch** berarti satu file CSV yang diproses pada satu kali eksekusi. Versi ini memakai alur validasi Python → staging → upsert → laEporan.
 
 ## Daftar isi
 
@@ -264,31 +264,6 @@ updated_at = EXCLUDED.updated_at
 `EXCLUDED` adalah nama khusus PostgreSQL untuk baris yang hendak diinsert tetapi
 berbenturan dengan baris lama. Ini bukan nama file, tabel staging, atau baris yang
 ditolak validasi Python.
-
-**Dari mana PostgreSQL mengetahui baris masukan tersebut?** Pada query ini, sumbernya
-adalah `SELECT ... FROM sales_staging`. Hasil SELECT menjadi calon baris untuk INSERT
-ke `automotive.sales`. Ketika order_id calon baris itu sudah ada di tabel tujuan,
-nilai calon baris tersebut tersedia sebagai `EXCLUDED` pada bagian DO UPDATE.
-
-```text
-Baris di sales_staging
-        ↓ SELECT ... FROM sales_staging
-Calon baris untuk INSERT ke automotive.sales
-        ↓ order_id sudah ada: terjadi konflik
-ON CONFLICT DO UPDATE dapat membaca nilai masukan lewat EXCLUDED
-        ↓ jika syarat WHERE terpenuhi
-Baris lama diperbarui menggunakan nilai masukan
-```
-
-Jadi, pada query kita, `EXCLUDED.status` berisi nilai status dari masukan yang berasal
-dari staging. `EXCLUDED` bukan alias seluruh tabel sales_staging; ia merujuk ke calon
-baris insert yang sedang mengalami konflik. PostgreSQL menyediakannya otomatis,
-sehingga tidak perlu CREATE TABLE atau FROM EXCLUDED.
-
-Sebagai ilustrasi: sales_staging membawa `ORD-001, delivered`, sedangkan sales sudah
-memiliki `ORD-001, pending`. Saat konflik ditangani, `target.status` bernilai pending
-dan `EXCLUDED.status` bernilai delivered. Assignment `status = EXCLUDED.status`
-mengganti status lama menjadi delivered jika syarat timestamp pada WHERE terpenuhi.
 
 Contoh jika ID yang sama punya status lama pending dan status masukan delivered:
 
